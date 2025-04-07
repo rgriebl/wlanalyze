@@ -105,7 +105,7 @@ QVariant Model::data(const QModelIndex &index, int role) const
     };
 
     auto formatTime = [](qint64 t) {
-        return u"%1.%2'%3"_s
+        return u"%1'%2.%3"_s
             .arg(t / 1000 / 1000)
             .arg(t / 1000 % 1000, 3, 10, QChar('0'))
             .arg(t % 1000, 3, 10, QChar('0'));
