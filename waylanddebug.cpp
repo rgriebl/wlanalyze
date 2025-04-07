@@ -380,7 +380,7 @@ Message *Parser::parseLine(const QString &line)
     if (!line.startsWith(u'[') || !line.endsWith(u')'))
         return nullptr;
     
-    static QRegularExpression re(uR"(^\[(\d+)\.(\d+)\](  ->)? (\w+)@(\d+)\.(\w+)\((.*)\)$)"_s);
+    static QRegularExpression re(uR"(^\[ *(\d+)\.(\d+)\](  ->)? (\w+)@(\d+)\.(\w+)\((.*)\)$)"_s);
     
     auto match = re.match(line);
     if (!match.hasMatch())
