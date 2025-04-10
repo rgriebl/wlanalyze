@@ -42,13 +42,15 @@ void Model::sort(int column, Qt::SortOrder order)
                 std::swap(m1, m2);
 
             switch (column) {
-            case Time: return (m1->m_time < m2->m_time); break;
-            case Direction: return (m1->m_direction < m2->m_direction); break;
-            case Object: return (m1->m_object <=> m2->m_object) < 0; break;
-            case Method: return m1->m_method.compare(m2->m_method) < 0; break;
-            case Arguments: return (m1->m_arguments < m2->m_arguments); break;
+            case Time: return (m1->m_time < m2->m_time);
+            case Connection: return m1->m_connection.compare(m2->m_connection) < 0;
+            case Queue: return m1->m_queue.compare(m2->m_queue) < 0;
+            case Direction: return (m1->m_direction < m2->m_direction);
+            case Object: return (m1->m_object <=> m2->m_object) < 0;
+            case Method: return m1->m_method.compare(m2->m_method) < 0;
+            case Arguments: return (m1->m_arguments < m2->m_arguments);
             case TimeDelta: return m_filteredTimeDeltas.at(m_filteredIndex.value(m1))
-                     < m_filteredTimeDeltas.at(m_filteredIndex.value(m2)); break;
+                     < m_filteredTimeDeltas.at(m_filteredIndex.value(m2));
             default:   Q_ASSERT(false); break;
             }
         });
@@ -112,10 +114,26 @@ QVariant Model::data(const QModelIndex &index, int role) const
             .arg(t % 1000, 3, 10, QChar('0'));
     };
 
+    auto shadeColor = [](int n, float alpha) {
+        static std::array<QColor, 12> shades;
+        static bool once = false;
+        if (!once) [[unlikely]] {
+            for (uint i = 0; i < 12; i++)
+                shades[i] = QColor::fromHsv(30 * int(i), 255, 255).toRgb();
+            once = true;
+        }
+        QColor c = shades[uint(n) % 12];
+        if (!qFuzzyIsNull(alpha))
+            c.setAlphaF(alpha);
+        return c;
+    };
+
     const Message *m = m_filtered.at(index.row());
     if (role == Qt::DisplayRole) {
         switch (index.column()) {
         case Time:       return formatTime(m->m_time);
+        case Connection: return m->m_connection;
+        case Queue:      return m->m_queue;
         case Direction: {
             switch (m->m_direction) {
             case Direction::Any:            return tr("Any");
@@ -132,6 +150,8 @@ QVariant Model::data(const QModelIndex &index, int role) const
         }
     } else if (role == BackgroundTintRole) {
         switch (index.column()) {
+        case Connection: return m->m_connection.isEmpty() ? QColor{} : shadeColor(qHash(m->m_connection), 0.2f);
+        case Queue:      return m->m_queue.isEmpty() ? QColor{} : shadeColor(qHash(m->m_queue), 0.4f);
         case Direction:
             if (m->m_direction == Direction::ToCompositor)
                 return QColor(0, 255, 0, 128);
@@ -161,6 +181,8 @@ QVariant Model::headerData(int section, Qt::Orientation orientation, int role) c
         return QVariant();
     switch (Column(section)) {
     case Time:       return tr("Time");
+    case Connection: return tr("Connection");
+    case Queue:      return tr("Queue");
     case Direction:  return tr("Direction");
     case Object:     return tr("Object");
     case Method:     return tr("Method");
@@ -296,8 +318,9 @@ ObjectRef ObjectRegistry::create(const QString &class_, uint instance)
 {
     auto idx = findInstance(instance);
     if (idx >= 0) {
-        throw Exception("trying to create an already existing object: %1#%2")
-            .arg(class_).arg(instance);
+        throw Exception("trying to create an already existing object: %1#%2 (found: %3#%4)")
+            .arg(class_).arg(instance)
+            .arg(m_objects.at(idx).m_class).arg(m_objects.at(idx).m_instance);
     }
     uint generation = 1; 
     auto genKey = std::make_pair(class_, instance);
@@ -350,8 +373,7 @@ Parser::~Parser()
 
 Model *Parser::parse()
 {
-    m_registry = { };
-    m_registry.create("wl_display", 1);
+    m_connectionRegistry = { };
 
     uint lineNumber = 0;
     try {
@@ -381,50 +403,58 @@ Model *Parser::parse()
 
 Message *Parser::parseLine(const QString &line)
 {
-    if (!line.startsWith(u'[') || !line.endsWith(u')'))
+    if ((!line.startsWith(u'<') && !line.startsWith(u'[')) || !line.endsWith(u')'))
         return nullptr;
-    
-    static QRegularExpression re(uR"(^\[ *(\d+)\.(\d+)\](  ->)? (\w+)@(\d+)\.(\w+)\((.*)\)$)"_s);
-    
+
+    // https://regex101.com/r/8yVF1H/3
+    static QRegularExpression re(uR"(^(<(?'connection'[^>]+)> )?\[ *(?'msec'\d+)\.(?'usec'\d+)\] +(\{(?'queue'[^\}]+)\})? *(?'send'->)? *(?'object'\w+)[#@](?'instance'\d+)\.(?'method'\w+)\((?'args'.*)\)$)"_s);
     auto match = re.match(line);
     if (!match.hasMatch())
         return nullptr;
-    if (match.lastCapturedIndex() != 7)
+    if (match.lastCapturedIndex() != 11)
         return nullptr;
 
     auto m = std::make_unique<Message>();
-    m->m_direction = match.hasCaptured(3) ? Direction::ToCompositor : Direction::FromCompositor;
-    m->m_time = match.capturedView(1).toULongLong() * 1000 + match.capturedView(2).toULongLong();
-    m->m_object = m_registry.resolve(match.captured(4), match.captured(5).toUInt());
-    m->m_method = match.captured(6);
-    m->m_arguments = match.captured(7).split(u", "_s);
+    m->m_connection = match.captured("connection");
+    if (!m_connectionRegistry.contains(m->m_connection))
+        m_connectionRegistry[m->m_connection].create("wl_display", 1);
+
+    m->m_queue = match.captured("queue");
+    m->m_direction = match.hasCaptured("send") ? Direction::ToCompositor : Direction::FromCompositor;
+    m->m_time = match.capturedView("msec").toULongLong() * 1000 + match.capturedView("usec").toULongLong();
+    m->m_object = m_connectionRegistry[m->m_connection].resolve(match.captured("object"), match.captured("instance").toUInt());
+    m->m_method = match.captured("method");
+    m->m_arguments = match.captured("args").split(u", "_s);
     for (const auto &arg : std::as_const(m->m_arguments)) {
         if (arg.startsWith(u"new id ")) {
             auto p = arg.indexOf(u'@');
+            if (p < 0)
+                p = arg.indexOf(u'#');
             if (p > 0) {
                 QString class_ = arg.mid(7, p - 7);
                 uint instance = arg.mid(p + 1).toUInt();
 
                 // special case: registry binds
-                if ((m->m_direction == Direction::ToCompositor)
-                    && (m->m_object.m_class == u"wl_registry")
+                if ((m->m_object.m_class == u"wl_registry")
                     && (m->m_method == u"bind")
                     && (m->m_arguments.size() == 4)
                     && (class_ == u"[unknown]")) {
                     class_ = m->m_arguments.at(1).mid(1).chopped(1); // remove quotes
+
+                    qWarning() << "FOund a reg bind for " << class_;
                 }
 
                 if (instance >= 0xff000000) // server side, but there are no delete_id calls
-                    m_registry.destroyIfExists(instance);
+                    m_connectionRegistry[m->m_connection].destroyIfExists(instance);
 
-                m->m_created << m_registry.create(class_, instance);
+                m->m_created << m_connectionRegistry[m->m_connection].create(class_, instance);
             }
         }
     }
     if ((m->m_method == u"delete_id") && (m->m_arguments.size() == 1)) {
         uint id = m->m_arguments.constFirst().toUInt();
         if (id)
-            m->m_destroyed << m_registry.destroy(id);
+            m->m_destroyed << m_connectionRegistry[m->m_connection].destroy(id);
     }
     return m.release();
 };
@@ -441,6 +471,14 @@ bool Filter::match(const Message *m) const
     }
     if (m_timeMin || m_timeMax) {
         if ((m_timeMin && (m->m_time < m_timeMin)) || (m_timeMax && (m->m_time > m_timeMax)))
+            return false;
+    }
+    if (!m_connectionMatch.isEmpty()) {
+        if (!m_connectionMatch.contains(m->m_connection))
+            return false;
+    }
+    if (!m_queueMatch.isEmpty()) {
+        if (!m_queueMatch.contains(m->m_queue))
             return false;
     }
     if (!m_classMatch.isEmpty()) {
@@ -497,6 +535,8 @@ bool Filter::isEmpty() const
     return (m_directionMatch == Direction::Any)
            && !m_timeMin
            && !m_timeMax
+           && m_connectionMatch.isEmpty()
+           && m_queueMatch.isEmpty()
            && m_classMatch.isEmpty()
            && m_instanceMatch.isEmpty()
            && m_methodMatch.isEmpty()

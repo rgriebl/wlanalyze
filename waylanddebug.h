@@ -40,6 +40,7 @@ public:
 
     Direction m_direction = Direction::Unknown;
     QString m_connection;
+    QString m_queue;
     quint64 m_time = 0;
     ObjectRef m_object;
     QString m_method;
@@ -75,6 +76,8 @@ public:
     Direction m_directionMatch = Direction::Any;
     quint64 m_timeMin;
     quint64 m_timeMax;
+    QStringList m_connectionMatch;
+    QStringList m_queueMatch;
     QStringList m_classMatch;
     QList<uint> m_instanceMatch;
     QStringList m_methodMatch;
@@ -87,10 +90,12 @@ public:
 class Model : public QAbstractTableModel {
 public:
     Model() = default;
-    ~Model();
+    ~Model() override;
 
     enum Column {
         Time,
+        Connection,
+        Queue,
         Direction,
         Object,
         Method,
@@ -151,7 +156,7 @@ private:
 
     QIODevice *m_device = nullptr;
     bool m_ownsDevice = false;
-    ObjectRegistry m_registry;
+    QHash<QString, ObjectRegistry> m_connectionRegistry;
 };
 
 } // namespace WaylandDebug
