@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 #include <algorithm>
-#include <format>
 
 #include <QIODevice>
 #include <QFile>
@@ -12,6 +11,8 @@
 #include <QtConcurrent/QtConcurrentFilter>
 
 #include "waylanddebug.h"
+#include "exception.h"
+
 
 using namespace Qt::StringLiterals;
 
@@ -123,7 +124,7 @@ QVariant Model::data(const QModelIndex &index, int role) const
             default: return QVariant();
             }
         }
-        case Object:     return u"%1@%2 [%3]"_s.arg(m->m_object.m_class).arg(m->m_object.m_instance).arg(m->m_object.m_generation);
+        case Object:     return u"%1#%2 [%3]"_s.arg(m->m_object.m_class).arg(m->m_object.m_instance).arg(m->m_object.m_generation);
         case Method:     return m->m_method;
         case Arguments:  return m->m_arguments.join(u", ");
         case TimeDelta:  return formatTime(m_filteredTimeDeltas.at(index.row()));
@@ -271,22 +272,23 @@ ObjectRef ObjectRegistry::resolve(const QString &class_, uint instance)
             for (qsizetype i = m_graveyard.size() - 1; i >= 0; --i) {
                 if ((m_graveyard.at(i).m_instance == instance) && (m_graveyard.at(i).m_class == class_)) {
                     o = m_graveyard.at(i);
-                    qWarning().nospace() << "Found object " << o.m_class << "@" << o.m_instance << " in the graveyard";
+                    qWarning().nospace() << "Found object " << o.m_class << "#" << o.m_instance << " in the graveyard";
                     found = true;
                     break;
                 }
             }
         }
         if (!found) {
-            throw std::logic_error(std::format("resolve failed to find an instance of {}@{}",
-                                               qPrintable(class_), instance));
+            throw Exception("resolve failed to find an instance of %#%2")
+                .arg(class_).arg(instance);
         }
     } else {
         o = m_objects.at(idx);
     }
-    if (!class_.isEmpty() && (o.m_class != class_))
-        throw std::logic_error(std::format("resolve found an instance ({}), but it is the wrong class ({})",
-                                           qPrintable(o.m_class), qPrintable(class_)));
+    if (!class_.isEmpty() && (o.m_class != class_)) {
+        throw Exception("resolve found object %1#%2, but it should have been of class %3")
+            .arg(o.m_class).arg(instance).arg(class_);
+    }
     return o;
 }
 
@@ -294,8 +296,8 @@ ObjectRef ObjectRegistry::create(const QString &class_, uint instance)
 {
     auto idx = findInstance(instance);
     if (idx >= 0) {
-        throw std::logic_error(std::format("trying to create an already existing object: {}@{}",
-                                           qPrintable(class_), instance));
+        throw Exception("trying to create an already existing object: %1#%2")
+            .arg(class_).arg(instance);
     }
     uint generation = 1; 
     auto genKey = std::make_pair(class_, instance);
@@ -314,7 +316,7 @@ ObjectRef ObjectRegistry::destroy(uint instance)
 {
     auto idx = findInstance(instance);
     if (idx < 0)
-        throw std::logic_error(std::format("destroy for unknown object @{}", instance));
+        throw Exception("destroy for unknown object #%1").arg(instance);
     auto o = m_objects.takeAt(idx);
     m_graveyard << o;
     return o;
@@ -353,8 +355,10 @@ Model *Parser::parse()
 
     uint lineNumber = 0;
     try {
-        if (!m_device || !m_device->isReadable())
-            throw std::logic_error("device is not readable");
+        if (!m_device)
+            throw Exception("No Wayland log provided");
+        if (!m_device->isReadable())
+            throw Exception("Wayland log is not readable");
 
         auto model = std::make_unique<Model>();
 
@@ -368,9 +372,9 @@ Model *Parser::parse()
 
         model->init();
         return model.release();
-    } catch (const std::exception &e) {
-        qWarning().nospace() << "Failed to parse log at line " << lineNumber << ": " << e.what();
-        return nullptr;
+    } catch (const Exception &e) {
+        throw Exception("Wayland log parse error at line %1: %2")
+            .arg(lineNumber).arg(e.errorString());
     }
 };
 

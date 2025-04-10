@@ -12,16 +12,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent)
 
 qt6_add_executable(wlanalyze
-  ${PROJECT_SOURCES}
-  main.cpp
-  mainwindow.cpp
-  mainwindow.h
-  waylanddebug.cpp
-  waylanddebug.h
-  extendeddelegate.cpp
-  extendeddelegate.h
-  filter.ui
-
+    main.cpp
+    mainwindow.cpp
+    mainwindow.h
+    waylanddebug.cpp
+    waylanddebug.h
+    exception.cpp
+    exception.h
+    extendeddelegate.cpp
+    extendeddelegate.h
+    filter.ui
 )
 
 target_link_libraries(wlanalyze PRIVATE Qt6::Widgets Qt6::Concurrent)
