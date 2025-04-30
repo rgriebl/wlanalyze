@@ -46,13 +46,15 @@ void Model::sort(int column, Qt::SortOrder order)
             case Connection: return m1->m_connection.compare(m2->m_connection) < 0;
             case Queue: return m1->m_queue.compare(m2->m_queue) < 0;
             case Direction: return (m1->m_direction < m2->m_direction);
-            case Object: return (m1->m_object <=> m2->m_object) < 0;
+            case Object: return (m1->m_object < m2->m_object);
             case Method: return m1->m_method.compare(m2->m_method) < 0;
             case Arguments: return (m1->m_arguments < m2->m_arguments);
             case TimeDelta: return m_filteredTimeDeltas.at(m_filteredIndex.value(m1))
                      < m_filteredTimeDeltas.at(m_filteredIndex.value(m2));
             default:   Q_ASSERT(false); break;
             }
+
+            return false;
         });
     }
     
@@ -421,7 +423,7 @@ Message *Parser::parseLine(const QString &line)
 
     m->m_queue = match.captured("queue");
     m->m_direction = match.hasCaptured("send") ? Direction::ToCompositor : Direction::FromCompositor;
-    m->m_time = match.capturedView("msec").toULongLong() * 1000 + match.capturedView("usec").toULongLong();
+    m->m_time = match.captured("msec").toULongLong() * 1000 + match.captured("usec").toULongLong();
     m->m_object = m_connectionRegistry[m->m_connection].resolve(match.captured("object"), match.captured("instance").toUInt());
     m->m_method = match.captured("method");
     m->m_arguments = match.captured("args").split(u", "_s);
