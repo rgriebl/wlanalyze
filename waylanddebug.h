@@ -27,7 +27,21 @@ public:
     ObjectRef() = default;
     ObjectRef(const QString &class_, uint instance, uint generation = 0);
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     auto operator<=>(const ObjectRef &) const = default;
+#else
+    auto operator<=>(const ObjectRef &other) const {
+        auto class_compare = m_class.compare(other.m_class);
+
+        if (class_compare != 0)
+            return class_compare <=> 0;
+
+        if (m_instance == other.m_instance)
+            return m_generation <=> other.m_generation;
+
+        return m_instance <=> other.m_instance;
+    }
+#endif
 
     QString m_class;
     uint m_instance = 0;
